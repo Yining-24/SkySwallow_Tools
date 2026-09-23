@@ -15,19 +15,6 @@ import logo from './assets/skyswallow-logo.jpg'
 
 const { Title, Paragraph } = Typography
 
-const tools = [
-  {
-    id: 'profit',
-    title: '明细利润',
-    description: '上传年度明细文件，计算每单毛利润和毛利率。',
-  },
-  {
-    id: 'summary',
-    title: '生成总表',
-    description: '根据已经计算的明细，生成客户分表和总体汇总。',
-  },
-]
-
 const statusDetails = {
   checking: {
     type: 'info',
@@ -43,11 +30,44 @@ const statusDetails = {
   },
 }
 
+async function downloadReport(endpoint, formData, outputName) {
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.error || '文件处理失败。')
+  }
+
+  const resultFile = await response.blob()
+  const downloadUrl = URL.createObjectURL(resultFile)
+
+  const downloadLink = document.createElement('a')
+  downloadLink.href = downloadUrl
+  downloadLink.download = outputName
+
+  document.body.appendChild(downloadLink)
+  downloadLink.click()
+  downloadLink.remove()
+
+  setTimeout(() => {
+    URL.revokeObjectURL(downloadUrl)
+  }, 1000)
+}
+
 function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
-  const [selectedFile, setSelectedFile] = useState(null)
-  const [processing, setProcessing] = useState(false)
-  const [processResult, setProcessResult] = useState(null)
+
+  const [profitFile, setProfitFile] = useState(null)
+  const [profitProcessing, setProfitProcessing] = useState(false)
+  const [profitResult, setProfitResult] = useState(null)
+
+  const [summaryFile, setSummaryFile] = useState(null)
+  const [ckFile, setCkFile] = useState(null)
+  const [summaryProcessing, setSummaryProcessing] = useState(false)
+  const [summaryResult, setSummaryResult] = useState(null)
 
   useEffect(() => {
     async function checkBackend() {
@@ -60,7 +80,9 @@ function App() {
 
         const data = await response.json()
 
-        setBackendStatus(data.status === 'ok' ? 'connected' : 'error')
+        setBackendStatus(
+          data.status === 'ok' ? 'connected' : 'error',
+        )
       } catch {
         setBackendStatus('error')
       }
@@ -70,58 +92,77 @@ function App() {
   }, [])
 
   async function handleProfitProcess() {
-    if (!selectedFile) {
+    if (!profitFile) {
       return
     }
 
-    setProcessing(true)
-    setProcessResult(null)
+    setProfitProcessing(true)
+    setProfitResult(null)
 
     try {
       const formData = new FormData()
-      formData.append('file', selectedFile)
+      formData.append('file', profitFile)
 
-      const response = await fetch('/api/profit', {
-        method: 'POST',
-        body: formData,
-      })
+      await downloadReport(
+        '/api/profit',
+        formData,
+        '明细利润_处理结果.xlsx',
+      )
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || '文件处理失败。')
-      }
-
-      const resultFile = await response.blob()
-      const downloadUrl = URL.createObjectURL(resultFile)
-
-      const downloadLink = document.createElement('a')
-      downloadLink.href = downloadUrl
-      downloadLink.download = '明细利润_处理结果.xlsx'
-
-      document.body.appendChild(downloadLink)
-      downloadLink.click()
-      downloadLink.remove()
-
-      setTimeout(() => {
-        URL.revokeObjectURL(downloadUrl)
-      }, 1000)
-
-      setProcessResult({
+      setProfitResult({
         type: 'success',
-        message: '处理完成，结果文件已经下载。',
+        message: '处理完成，明细利润文件已经下载。',
       })
     } catch (error) {
-      setProcessResult({
+      setProfitResult({
         type: 'error',
         message:
           error instanceof Error ? error.message : '文件处理失败。',
       })
     } finally {
-      setProcessing(false)
+      setProfitProcessing(false)
+    }
+  }
+
+  async function handleSummaryProcess() {
+    if (!summaryFile) {
+      return
+    }
+
+    setSummaryProcessing(true)
+    setSummaryResult(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', summaryFile)
+
+      if (ckFile) {
+        formData.append('ck_file', ckFile)
+      }
+
+      await downloadReport(
+        '/api/summary',
+        formData,
+        '客户总表_处理结果.xlsx',
+      )
+
+      setSummaryResult({
+        type: 'success',
+        message: '处理完成，客户总表已经下载。',
+      })
+    } catch (error) {
+      setSummaryResult({
+        type: 'error',
+        message:
+          error instanceof Error ? error.message : '文件处理失败。',
+      })
+    } finally {
+      setSummaryProcessing(false)
     }
   }
 
   const currentStatus = statusDetails[backendStatus]
+  const backendConnected = backendStatus === 'connected'
 
   return (
     <main className="page">
@@ -150,64 +191,111 @@ function App() {
         </section>
 
         <Row gutter={[24, 24]}>
-          {tools.map((tool) => (
-            <Col xs={24} md={12} key={tool.id}>
-              <Card title={tool.title} className="tool-card">
-                <Paragraph>{tool.description}</Paragraph>
+          <Col xs={24} md={12}>
+            <Card title="明细利润" className="tool-card">
+              <Paragraph>
+                上传年度明细文件，计算每单毛利润和毛利率。
+              </Paragraph>
 
-                {tool.id === 'profit' ? (
-                  <>
-                    <Upload
-                      accept=".xlsx"
-                      maxCount={1}
-                      fileList={selectedFile ? [selectedFile] : []}
-                      beforeUpload={(file) => {
-                        setSelectedFile(file)
-                        setProcessResult(null)
+              <Upload
+                accept=".xlsx"
+                maxCount={1}
+                fileList={profitFile ? [profitFile] : []}
+                beforeUpload={(file) => {
+                  setProfitFile(file)
+                  setProfitResult(null)
 
-                        return false
-                      }}
-                      onRemove={() => {
-                        setSelectedFile(null)
-                        setProcessResult(null)
-                      }}
-                    >
-                      <Button block>选择 Excel 文件</Button>
-                    </Upload>
+                  return false
+                }}
+                onRemove={() => {
+                  setProfitFile(null)
+                  setProfitResult(null)
+                }}
+              >
+                <Button block>选择年度明细文件</Button>
+              </Upload>
 
-                    {processResult && (
-                      <Alert
-                        type={processResult.type}
-                        message={processResult.message}
-                        showIcon
-                      />
-                    )}
+              {profitResult && (
+                <Alert
+                  type={profitResult.type}
+                  message={profitResult.message}
+                  showIcon
+                />
+              )}
 
-                    <Button
-                      type="primary"
-                      block
-                      loading={processing}
-                      disabled={
-                        !selectedFile ||
-                        backendStatus !== 'connected'
-                      }
-                      onClick={handleProfitProcess}
-                    >
-                      生成明细利润
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Tag>稍后开发</Tag>
+              <Button
+                type="primary"
+                block
+                loading={profitProcessing}
+                disabled={!profitFile || !backendConnected}
+                onClick={handleProfitProcess}
+              >
+                生成明细利润
+              </Button>
+            </Card>
+          </Col>
 
-                    <Button type="primary" block disabled>
-                      稍后连接
-                    </Button>
-                  </>
-                )}
-              </Card>
-            </Col>
-          ))}
+          <Col xs={24} md={12}>
+            <Card title="生成总表" className="tool-card">
+              <Paragraph>
+                上传已经计算过利润的明细文件，生成总体数据和客户分表。
+              </Paragraph>
+
+              <Upload
+                accept=".xlsx"
+                maxCount={1}
+                fileList={summaryFile ? [summaryFile] : []}
+                beforeUpload={(file) => {
+                  setSummaryFile(file)
+                  setSummaryResult(null)
+
+                  return false
+                }}
+                onRemove={() => {
+                  setSummaryFile(null)
+                  setSummaryResult(null)
+                }}
+              >
+                <Button block>选择明细利润文件</Button>
+              </Upload>
+
+              <Upload
+                accept=".xlsx"
+                maxCount={1}
+                fileList={ckFile ? [ckFile] : []}
+                beforeUpload={(file) => {
+                  setCkFile(file)
+                  setSummaryResult(null)
+
+                  return false
+                }}
+                onRemove={() => {
+                  setCkFile(null)
+                  setSummaryResult(null)
+                }}
+              >
+                <Button block>选择 C/K 标记文件（可选）</Button>
+              </Upload>
+
+              {summaryResult && (
+                <Alert
+                  type={summaryResult.type}
+                  message={summaryResult.message}
+                  showIcon
+                />
+              )}
+
+              <Button
+                type="primary"
+                block
+                loading={summaryProcessing}
+                disabled={!summaryFile || !backendConnected}
+                onClick={handleSummaryProcess}
+              >
+                生成客户总表
+              </Button>
+            </Card>
+          </Col>
         </Row>
       </div>
     </main>
