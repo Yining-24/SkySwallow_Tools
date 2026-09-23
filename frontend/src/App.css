@@ -35,3 +35,9 @@
   height: auto;
   margin-bottom: 20px;
 }
+
+.backend-status {
+  max-width: 520px;
+  margin-top: 20px;
+}
+
