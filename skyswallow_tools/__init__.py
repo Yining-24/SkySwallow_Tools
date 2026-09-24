@@ -1,9 +1,14 @@
 from datetime import timedelta
+from pathlib import Path
 
-from flask import Flask, render_template
+from flask import Flask, abort, send_from_directory
 
 from .api import api_bp
 from .auth import auth_bp
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 
 
 def create_app():
@@ -38,7 +43,20 @@ def create_app():
     app.register_blueprint(api_bp)
 
     @app.get("/")
-    def home():
-        return render_template("index.html")
+    def frontend_index():
+        return send_from_directory(
+            str(FRONTEND_DIST),
+            "index.html",
+        )
+
+    @app.get("/<path:filename>")
+    def frontend_file(filename):
+        if filename.startswith("api/"):
+            abort(404)
+
+        return send_from_directory(
+            str(FRONTEND_DIST),
+            filename,
+        )
 
     return app
