@@ -10,6 +10,8 @@ from tina_明细利润 import DataFormatError
 from tina_明细利润 import process as process_profit
 from tina_生成总表 import process as process_summary
 
+from .auth import permission_required
+
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -20,6 +22,7 @@ def health():
 
 
 @api_bp.post("/profit")
+@permission_required("profit")
 def create_profit_report():
     uploaded_file = request.files.get("file")
 
@@ -80,6 +83,7 @@ def create_profit_report():
 
 
 @api_bp.post("/summary")
+@permission_required("summary")
 def create_summary_report():
     uploaded_file = request.files.get("file")
     ck_file = request.files.get("ck_file")

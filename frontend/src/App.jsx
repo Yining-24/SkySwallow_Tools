@@ -4,7 +4,10 @@ import {
   Button,
   Card,
   Col,
+  Input,
   Row,
+  Select,
+  Space,
   Tag,
   Typography,
   Upload,
@@ -13,7 +16,7 @@ import {
 import './App.css'
 import logo from './assets/skyswallow-logo.jpg'
 
-const { Title, Paragraph } = Typography
+const { Title, Paragraph, Text } = Typography
 
 const statusDetails = {
   checking: {
@@ -29,6 +32,21 @@ const statusDetails = {
     message: '无法连接后端，请确认 Flask 正在运行。',
   },
 }
+
+const roleOptions = [
+  {
+    value: 'admin',
+    label: '管理员',
+  },
+  {
+    value: 'finance',
+    label: '财务',
+  },
+  {
+    value: 'followup',
+    label: '跟单员',
+  },
+]
 
 async function downloadReport(endpoint, formData, outputName) {
   const response = await fetch(endpoint, {
@@ -60,6 +78,13 @@ async function downloadReport(endpoint, formData, outputName) {
 function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
 
+  const [authStatus, setAuthStatus] = useState('checking')
+  const [currentUser, setCurrentUser] = useState(null)
+  const [selectedRole, setSelectedRole] = useState('finance')
+  const [password, setPassword] = useState('')
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [loginError, setLoginError] = useState(null)
+
   const [profitFile, setProfitFile] = useState(null)
   const [profitProcessing, setProfitProcessing] = useState(false)
   const [profitResult, setProfitResult] = useState(null)
@@ -70,26 +95,100 @@ function App() {
   const [summaryResult, setSummaryResult] = useState(null)
 
   useEffect(() => {
-    async function checkBackend() {
+    async function initializeApplication() {
       try {
-        const response = await fetch('/api/health')
+        const healthResponse = await fetch('/api/health')
 
-        if (!response.ok) {
+        if (!healthResponse.ok) {
           throw new Error('Backend returned an error')
         }
 
-        const data = await response.json()
+        const healthData = await healthResponse.json()
 
         setBackendStatus(
-          data.status === 'ok' ? 'connected' : 'error',
+          healthData.status === 'ok' ? 'connected' : 'error',
         )
       } catch {
         setBackendStatus('error')
+        setAuthStatus('anonymous')
+        return
+      }
+
+      try {
+        const sessionResponse = await fetch('/api/auth/session')
+        const sessionData = await sessionResponse.json()
+
+        if (sessionData.authenticated) {
+          setCurrentUser(sessionData)
+          setAuthStatus('authenticated')
+        } else {
+          setCurrentUser(null)
+          setAuthStatus('anonymous')
+        }
+      } catch {
+        setCurrentUser(null)
+        setAuthStatus('anonymous')
       }
     }
 
-    checkBackend()
+    initializeApplication()
   }, [])
+
+  async function handleLogin() {
+    if (!password) {
+      setLoginError('请输入共享口令。')
+      return
+    }
+
+    setLoginLoading(true)
+    setLoginError(null)
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          role: selectedRole,
+          password,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '登录失败。')
+      }
+
+      setCurrentUser(data)
+      setAuthStatus('authenticated')
+      setPassword('')
+    } catch (error) {
+      setLoginError(
+        error instanceof Error ? error.message : '登录失败。',
+      )
+    } finally {
+      setLoginLoading(false)
+    }
+  }
+
+  async function handleLogout() {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+    })
+
+    setCurrentUser(null)
+    setAuthStatus('anonymous')
+    setPassword('')
+    setLoginError(null)
+
+    setProfitFile(null)
+    setProfitResult(null)
+    setSummaryFile(null)
+    setCkFile(null)
+    setSummaryResult(null)
+  }
 
   async function handleProfitProcess() {
     if (!profitFile) {
@@ -164,6 +263,11 @@ function App() {
   const currentStatus = statusDetails[backendStatus]
   const backendConnected = backendStatus === 'connected'
 
+  const permissions = currentUser?.permissions ?? []
+  const canUseProfit = permissions.includes('profit')
+  const canUseSummary = permissions.includes('summary')
+  const hasAvailableTools = canUseProfit || canUseSummary
+
   return (
     <main className="page">
       <div className="container">
@@ -179,7 +283,7 @@ function App() {
           <Title>SkySwallow Tools</Title>
 
           <Paragraph type="secondary">
-            选择需要使用的报表工具。
+            登录后选择需要使用的报表工具。
           </Paragraph>
 
           <Alert
@@ -190,35 +294,49 @@ function App() {
           />
         </section>
 
-        <Row gutter={[24, 24]}>
-          <Col xs={24} md={12}>
-            <Card title="明细利润" className="tool-card">
-              <Paragraph>
-                上传年度明细文件，计算每单毛利润和毛利率。
-              </Paragraph>
+        {authStatus === 'checking' && (
+          <Card title="正在读取登录状态">
+            <Text>请稍候……</Text>
+          </Card>
+        )}
 
-              <Upload
-                accept=".xlsx"
-                maxCount={1}
-                fileList={profitFile ? [profitFile] : []}
-                beforeUpload={(file) => {
-                  setProfitFile(file)
-                  setProfitResult(null)
-
-                  return false
+        {authStatus === 'anonymous' && (
+          <Card
+            title="登录"
+            style={{
+              maxWidth: 520,
+            }}
+          >
+            <Space
+              direction="vertical"
+              size="middle"
+              style={{
+                width: '100%',
+              }}
+            >
+              <Select
+                value={selectedRole}
+                options={roleOptions}
+                onChange={setSelectedRole}
+                style={{
+                  width: '100%',
                 }}
-                onRemove={() => {
-                  setProfitFile(null)
-                  setProfitResult(null)
-                }}
-              >
-                <Button block>选择年度明细文件</Button>
-              </Upload>
+              />
 
-              {profitResult && (
+              <Input.Password
+                value={password}
+                placeholder="请输入共享口令"
+                onChange={(event) => {
+                  setPassword(event.target.value)
+                  setLoginError(null)
+                }}
+                onPressEnter={handleLogin}
+              />
+
+              {loginError && (
                 <Alert
-                  type={profitResult.type}
-                  message={profitResult.message}
+                  type="error"
+                  message={loginError}
                   showIcon
                 />
               )}
@@ -226,77 +344,173 @@ function App() {
               <Button
                 type="primary"
                 block
-                loading={profitProcessing}
-                disabled={!profitFile || !backendConnected}
-                onClick={handleProfitProcess}
+                loading={loginLoading}
+                disabled={!backendConnected}
+                onClick={handleLogin}
               >
-                生成明细利润
+                登录
               </Button>
-            </Card>
-          </Col>
+            </Space>
+          </Card>
+        )}
 
-          <Col xs={24} md={12}>
-            <Card title="生成总表" className="tool-card">
-              <Paragraph>
-                上传已经计算过利润的明细文件，生成总体数据和客户分表。
-              </Paragraph>
+        {authStatus === 'authenticated' && currentUser && (
+          <>
+            <Space
+              size="middle"
+              style={{
+                marginBottom: 24,
+              }}
+            >
+              <Tag color="green">
+                当前角色：{currentUser.role_label}
+              </Tag>
 
-              <Upload
-                accept=".xlsx"
-                maxCount={1}
-                fileList={summaryFile ? [summaryFile] : []}
-                beforeUpload={(file) => {
-                  setSummaryFile(file)
-                  setSummaryResult(null)
-
-                  return false
-                }}
-                onRemove={() => {
-                  setSummaryFile(null)
-                  setSummaryResult(null)
-                }}
-              >
-                <Button block>选择明细利润文件</Button>
-              </Upload>
-
-              <Upload
-                accept=".xlsx"
-                maxCount={1}
-                fileList={ckFile ? [ckFile] : []}
-                beforeUpload={(file) => {
-                  setCkFile(file)
-                  setSummaryResult(null)
-
-                  return false
-                }}
-                onRemove={() => {
-                  setCkFile(null)
-                  setSummaryResult(null)
-                }}
-              >
-                <Button block>选择 C/K 标记文件（可选）</Button>
-              </Upload>
-
-              {summaryResult && (
-                <Alert
-                  type={summaryResult.type}
-                  message={summaryResult.message}
-                  showIcon
-                />
-              )}
-
-              <Button
-                type="primary"
-                block
-                loading={summaryProcessing}
-                disabled={!summaryFile || !backendConnected}
-                onClick={handleSummaryProcess}
-              >
-                生成客户总表
+              <Button onClick={handleLogout}>
+                退出登录
               </Button>
-            </Card>
-          </Col>
-        </Row>
+            </Space>
+
+            {!hasAvailableTools && (
+              <Alert
+                type="info"
+                message="当前角色暂时没有可使用的工具。"
+                description="非财务工具将在以后加入。"
+                showIcon
+              />
+            )}
+
+            {hasAvailableTools && (
+              <Row gutter={[24, 24]}>
+                {canUseProfit && (
+                  <Col xs={24} md={12}>
+                    <Card
+                      title="明细利润"
+                      className="tool-card"
+                    >
+                      <Paragraph>
+                        上传年度明细文件，计算每单毛利润和毛利率。
+                      </Paragraph>
+
+                      <Upload
+                        accept=".xlsx"
+                        maxCount={1}
+                        fileList={
+                          profitFile ? [profitFile] : []
+                        }
+                        beforeUpload={(file) => {
+                          setProfitFile(file)
+                          setProfitResult(null)
+
+                          return false
+                        }}
+                        onRemove={() => {
+                          setProfitFile(null)
+                          setProfitResult(null)
+                        }}
+                      >
+                        <Button block>
+                          选择年度明细文件
+                        </Button>
+                      </Upload>
+
+                      {profitResult && (
+                        <Alert
+                          type={profitResult.type}
+                          message={profitResult.message}
+                          showIcon
+                        />
+                      )}
+
+                      <Button
+                        type="primary"
+                        block
+                        loading={profitProcessing}
+                        disabled={!profitFile}
+                        onClick={handleProfitProcess}
+                      >
+                        生成明细利润
+                      </Button>
+                    </Card>
+                  </Col>
+                )}
+
+                {canUseSummary && (
+                  <Col xs={24} md={12}>
+                    <Card
+                      title="生成总表"
+                      className="tool-card"
+                    >
+                      <Paragraph>
+                        上传已经计算过利润的明细文件，生成总体数据和客户分表。
+                      </Paragraph>
+
+                      <Upload
+                        accept=".xlsx"
+                        maxCount={1}
+                        fileList={
+                          summaryFile ? [summaryFile] : []
+                        }
+                        beforeUpload={(file) => {
+                          setSummaryFile(file)
+                          setSummaryResult(null)
+
+                          return false
+                        }}
+                        onRemove={() => {
+                          setSummaryFile(null)
+                          setSummaryResult(null)
+                        }}
+                      >
+                        <Button block>
+                          选择明细利润文件
+                        </Button>
+                      </Upload>
+
+                      <Upload
+                        accept=".xlsx"
+                        maxCount={1}
+                        fileList={ckFile ? [ckFile] : []}
+                        beforeUpload={(file) => {
+                          setCkFile(file)
+                          setSummaryResult(null)
+
+                          return false
+                        }}
+                        onRemove={() => {
+                          setCkFile(null)
+                          setSummaryResult(null)
+                        }}
+                      >
+                        <Button block>
+                          选择 C/K 标记文件（可选）
+                        </Button>
+                      </Upload>
+
+                      {summaryResult && (
+                        <Alert
+                          type={summaryResult.type}
+                          message={summaryResult.message}
+                          showIcon
+                        />
+                      )}
+
+                      <Button
+                        type="primary"
+                        block
+                        loading={summaryProcessing}
+                        disabled={!summaryFile}
+                        onClick={handleSummaryProcess}
+                      >
+                        生成客户总表
+                      </Button>
+                    </Card>
+                  </Col>
+                )}
+              </Row>
+            )}
+          </>
+        )}
       </div>
     </main>
   )
