@@ -43,6 +43,92 @@ jobs:
       - name: Build Windows application
         run: python -m PyInstaller --clean --noconfirm SkySwallowTools.spec
 
+      - name: Test packaged Windows application
+        shell: pwsh
+        run: |
+          $instancePath = Join-Path $env:RUNNER_TEMP "SkySwallowToolsTest"
+          New-Item -ItemType Directory -Force -Path $instancePath | Out-Null
+
+          @'
+          SECRET_KEY = "github-actions-smoke-test-only"
+
+          PASSWORD_HASHES = {
+              "admin": "unused-in-smoke-test",
+              "finance": "unused-in-smoke-test",
+              "followup": "unused-in-smoke-test",
+          }
+          '@ | Set-Content `
+            -Path (Join-Path $instancePath "config.py") `
+            -Encoding utf8
+
+          $env:SKYSWALLOW_INSTANCE_PATH = $instancePath
+          $outputLog = Join-Path $env:RUNNER_TEMP "server-output.log"
+          $errorLog = Join-Path $env:RUNNER_TEMP "server-error.log"
+
+          $server = Start-Process `
+            -FilePath "dist/SkySwallowTools/SkySwallowServer.exe" `
+            -PassThru `
+            -RedirectStandardOutput $outputLog `
+            -RedirectStandardError $errorLog
+
+          try {
+              $serverReady = $false
+
+              for ($attempt = 1; $attempt -le 30; $attempt++) {
+                  if ($server.HasExited) {
+                      throw "The packaged server stopped unexpectedly."
+                  }
+
+                  try {
+                      $health = Invoke-RestMethod `
+                        -Uri "http://127.0.0.1:5001/api/health" `
+                        -TimeoutSec 2
+
+                      if ($health.status -eq "ok") {
+                          $serverReady = $true
+                          break
+                      }
+                  }
+                  catch {
+                      Start-Sleep -Seconds 1
+                  }
+              }
+
+              if (-not $serverReady) {
+                  throw "The packaged server did not become ready within 30 seconds."
+              }
+
+              $homepage = Invoke-WebRequest `
+                -Uri "http://127.0.0.1:5001/" `
+                -UseBasicParsing `
+                -TimeoutSec 5
+
+              if ($homepage.StatusCode -ne 200) {
+                  throw "The homepage returned HTTP $($homepage.StatusCode)."
+              }
+
+              $session = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:5001/api/auth/session" `
+                -TimeoutSec 5
+
+              if ($session.authenticated -ne $false) {
+                  throw "A new session should not already be authenticated."
+              }
+
+              Write-Host "Packaged Windows application passed the smoke test."
+          }
+          finally {
+              if (-not $server.HasExited) {
+                  Stop-Process -Id $server.Id -Force
+              }
+
+              Write-Host "Server output:"
+              Get-Content $outputLog -ErrorAction SilentlyContinue
+
+              Write-Host "Server errors:"
+              Get-Content $errorLog -ErrorAction SilentlyContinue
+          }
+
       - name: Create ZIP package
         shell: pwsh
         run: |
