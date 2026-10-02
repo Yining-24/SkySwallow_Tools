@@ -1,6 +1,7 @@
 """Check that existing Windows configuration is accepted only when private."""
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -45,6 +46,21 @@ class ConfigurationAclTests(unittest.TestCase):
             ),
         ), self.assertRaisesRegex(OSError, "Access is denied"):
             _assert_trusted_acl(Path("example"), self.allowed)
+
+    def test_does_not_inherit_powershell_7_module_paths(self):
+        output = json.dumps({
+            "Owner": ADMINISTRATORS_SID,
+            "Grants": list(self.allowed),
+        })
+
+        with patch.dict(os.environ, {"PSModulePath": "PowerShell7Modules"}), patch(
+            "skyswallow_tools.configuration.subprocess.run",
+            return_value=SimpleNamespace(stdout=output, stderr="", returncode=0),
+        ) as process:
+            _assert_trusted_acl(Path("example"), self.allowed)
+            environment = process.call_args.kwargs["env"]
+            self.assertFalse(any(key.upper() == "PSMODULEPATH" for key in environment))
+            self.assertEqual(os.environ["PSModulePath"], "PowerShell7Modules")
 
 
 if __name__ == "__main__":

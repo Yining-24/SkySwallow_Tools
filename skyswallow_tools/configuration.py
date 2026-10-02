@@ -77,7 +77,13 @@ $grants = @(
     Grants = $grants
 } | ConvertTo-Json -Compress -Depth 3
 """
-    environment = os.environ.copy()
+    # A Python child of PowerShell 7 inherits incompatible Windows PowerShell
+    # module paths. Let powershell.exe rebuild its own module search path.
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() != "PSMODULEPATH"
+    }
     environment["SKYSWALLOW_ACL_TARGET"] = str(path)
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
