@@ -53,7 +53,7 @@ jobs:
           SECRET_KEY = "github-actions-smoke-test-only"
 
           PASSWORD_HASHES = {
-              "admin": "unused-in-smoke-test",
+              "admin": "pbkdf2:sha256:1000000$4e9021dc5ba27a78$1451677b38218e1d03d85470dd5e0241f2d7ebbc535116515c771ed4552fa01e",
               "finance": "unused-in-smoke-test",
               "followup": "unused-in-smoke-test",
           }
@@ -115,6 +115,29 @@ jobs:
                   throw "A new session should not already be authenticated."
               }
 
+              $browserSession = New-Object `
+                Microsoft.PowerShell.Commands.WebRequestSession
+              $login = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:5001/api/auth/login" `
+                -Method Post `
+                -ContentType "application/json" `
+                -Body '{"role":"admin","password":"SkyTest2026!"}' `
+                -WebSession $browserSession `
+                -TimeoutSec 5
+
+              if ($login.authenticated -ne $true) {
+                  throw "Administrator login failed."
+              }
+
+              $signedIn = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:5001/api/auth/session" `
+                -WebSession $browserSession `
+                -TimeoutSec 5
+
+              if ($signedIn.role -ne "admin") {
+                  throw "The administrator session was not retained."
+              }
+
               Write-Host "Packaged Windows application passed the smoke test."
           }
           finally {
@@ -140,6 +163,60 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           path: dist/SkySwallowTools-windows-x64.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $compiler = Join-Path `
+            ${env:ProgramFiles(x86)} `
+            "Inno Setup 6\ISCC.exe"
+
+          if (-not (Test-Path $compiler)) {
+              throw "Inno Setup compiler was not found: $compiler"
+          }
+
+          & $compiler "installer/SkySwallowTools.iss"
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Inno Setup failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Test Windows installer
+        shell: pwsh
+        run: |
+          $installer = Resolve-Path `
+            "dist/SkySwallowTools-Setup-windows-x64.exe"
+          $installPath = Join-Path $env:RUNNER_TEMP "SkySwallowInstalled"
+          $installation = Start-Process `
+            -FilePath $installer `
+            -ArgumentList @(
+              "/VERYSILENT",
+              "/SUPPRESSMSGBOXES",
+              "/NORESTART",
+              "/DIR=$installPath"
+            ) `
+            -Wait `
+            -PassThru
+
+          if ($installation.ExitCode -ne 0) {
+              throw "The installer exited with code $($installation.ExitCode)."
+          }
+
+          if (-not (Test-Path (Join-Path $installPath "SkySwallowServer.exe"))) {
+              throw "The installed server executable was not found."
+          }
+
+          if (-not (Test-Path (Join-Path $installPath "_internal/frontend/dist/index.html"))) {
+              throw "The installed frontend was not found."
+          }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/SkySwallowTools-Setup-windows-x64.exe
           archive: false
           if-no-files-found: error
           retention-days: 14
