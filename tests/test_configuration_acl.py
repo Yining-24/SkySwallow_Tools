@@ -22,7 +22,7 @@ class ConfigurationAclTests(unittest.TestCase):
 
         with patch(
             "skyswallow_tools.configuration.subprocess.run",
-            return_value=SimpleNamespace(stdout=output),
+            return_value=SimpleNamespace(stdout=output, stderr="", returncode=0),
         ):
             _assert_trusted_acl(Path("example"), self.allowed)
 
@@ -36,6 +36,15 @@ class ConfigurationAclTests(unittest.TestCase):
     def test_rejects_broad_access(self):
         with self.assertRaises(OSError):
             self.check_acl(ADMINISTRATORS_SID, [*self.allowed, "S-1-1-0"])
+
+    def test_reports_windows_inspection_error(self):
+        with patch(
+            "skyswallow_tools.configuration.subprocess.run",
+            return_value=SimpleNamespace(
+                stdout="", stderr="Access is denied", returncode=1,
+            ),
+        ), self.assertRaisesRegex(OSError, "Access is denied"):
+            _assert_trusted_acl(Path("example"), self.allowed)
 
 
 if __name__ == "__main__":

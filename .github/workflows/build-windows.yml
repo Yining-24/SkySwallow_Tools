@@ -2,6 +2,21 @@ name: Build Windows package
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-windows.yml'
+      - 'skyswallow_tools/**'
+      - '*.py'
+      - 'frontend/**'
+      - 'requirements*.txt'
+      - 'SkySwallowTools.spec'
+      - 'installer/**'
+      - 'tests/**'
+
+concurrency:
+  group: windows-package-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -162,14 +177,6 @@ jobs:
             -Path dist/SkySwallowTools/* `
             -DestinationPath dist/SkySwallowTools-windows-x64.zip
 
-      - name: Upload Windows package
-        uses: actions/upload-artifact@v7
-        with:
-          path: dist/SkySwallowTools-windows-x64.zip
-          archive: false
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Build Windows installer
         shell: pwsh
         run: |
@@ -224,6 +231,10 @@ jobs:
             $env:RUNNER_TEMP `
             "SkySwallowInstalledConfig"
           python -m tests.prepare_installer_config
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "First-time configuration failed. See the Python error above."
+          }
 
           $configPath = Join-Path $env:SKYSWALLOW_INSTANCE_PATH "config.py"
           $broadGroups = @("S-1-1-0", "S-1-5-11", "S-1-5-32-545")
@@ -297,7 +308,20 @@ jobs:
               if (-not $server.HasExited) {
                   Stop-Process -Id $server.Id -Force
               }
+
+              Get-Content (Join-Path $env:RUNNER_TEMP "installed-output.log") `
+                -ErrorAction SilentlyContinue
+              Get-Content (Join-Path $env:RUNNER_TEMP "installed-errors.log") `
+                -ErrorAction SilentlyContinue
           }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/SkySwallowTools-windows-x64.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v7

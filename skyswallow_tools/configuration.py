@@ -85,8 +85,12 @@ $grants = @(
         capture_output=True,
         text=True,
         errors="replace",
-        check=True,
+        check=False,
     )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise OSError(f"Could not inspect permissions on {path}: {detail}")
+
     try:
         acl = json.loads(result.stdout)
     except (TypeError, ValueError) as error:
