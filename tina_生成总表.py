@@ -549,14 +549,22 @@ def process(input_path: Path, output_path: Path, ck_path: Path | None = None) ->
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_atomic(output_workbook, output_path)
 
-    check = load_workbook(output_path, data_only=True, read_only=True)
-    expected_sheets = client_count + (2 if ck_path is not None else 1)
-    if OVERVIEW_SHEET not in check.sheetnames or len(check.sheetnames) != expected_sheets:
-        raise DataFormatError("输出验证失败：总体数据或客户sheet数量不正确。")
-    expected_headers = OVERVIEW_HEADERS + (COMMISSION_HEADERS if ck_path is not None else [])
-    headers = [check[OVERVIEW_SHEET].cell(row=4, column=column).value for column in range(1, len(expected_headers) + 1)]
-    if headers != expected_headers:
-        raise DataFormatError("输出验证失败：总表表头顺序不正确。")
+    # Read-only workbooks keep their ZIP archive open. Own the underlying stream
+    # as well, so Windows can delete this output even when validation raises.
+    with output_path.open("rb") as output_file:
+        check = load_workbook(output_file, data_only=True, read_only=True)
+        try:
+            expected_sheets = client_count + (2 if ck_path is not None else 1)
+            if OVERVIEW_SHEET not in check.sheetnames or len(check.sheetnames) != expected_sheets:
+                raise DataFormatError("输出验证失败：总体数据或客户sheet数量不正确。")
+            expected_headers = OVERVIEW_HEADERS + (COMMISSION_HEADERS if ck_path is not None else [])
+            headers = list(check[OVERVIEW_SHEET].iter_rows(
+                min_row=4, max_row=4, max_col=len(expected_headers), values_only=True,
+            ))[0]
+            if list(headers) != expected_headers:
+                raise DataFormatError("输出验证失败：总表表头顺序不正确。")
+        finally:
+            check.close()
     return len(orders), client_count, warnings
 
 

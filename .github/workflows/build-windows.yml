@@ -327,6 +327,12 @@ jobs:
           python -m tests.prepare_installer_config --reset
           if ($LASTEXITCODE -ne 0) { throw "Password-reset verification failed." }
 
+          $reportTemp = Join-Path $env:RUNNER_TEMP "SkySwallowReportTemp"
+          New-Item -ItemType Directory -Force -Path $reportTemp | Out-Null
+          $previousTemp = $env:TEMP
+          $previousTmp = $env:TMP
+          $env:TEMP = $reportTemp
+          $env:TMP = $reportTemp
           $server = Start-Process `
             -FilePath (Join-Path $installPath "SkySwallowServer.exe") `
             -PassThru `
@@ -355,9 +361,13 @@ jobs:
                     -Method Post -ContentType "application/json" -Body $body -TimeoutSec 5
                   if ($login.role -ne $role) { throw "Login failed after password reset for $role." }
               }
+              python -m tests.exercise_installed_reports
+              if ($LASTEXITCODE -ne 0) { throw "The installed report-processing test failed." }
           }
           finally {
               if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+              $env:TEMP = $previousTemp
+              $env:TMP = $previousTmp
               Get-Content (Join-Path $env:RUNNER_TEMP "reset-output.log") -ErrorAction SilentlyContinue
               Get-Content (Join-Path $env:RUNNER_TEMP "reset-errors.log") -ErrorAction SilentlyContinue
           }

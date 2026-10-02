@@ -1,5 +1,5 @@
 #define AppName "SkySwallow Tools"
-#define AppVersion "0.1.2-preview"
+#define AppVersion "0.1.3-preview"
 
 [Setup]
 AppId={{4B3B8204-E522-4B8F-BE1C-7B90150BBE46}
