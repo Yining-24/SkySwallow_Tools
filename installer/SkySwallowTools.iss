@@ -1,5 +1,5 @@
 #define AppName "SkySwallow Tools"
-#define AppVersion "0.1.1-preview"
+#define AppVersion "0.1.2-preview"
 
 [Setup]
 AppId={{4B3B8204-E522-4B8F-BE1C-7B90150BBE46}
@@ -24,6 +24,7 @@ Source: "..\dist\SkySwallowTools\*"; DestDir: "{app}"; Flags: ignoreversion recu
 
 [Icons]
 Name: "{group}\Start SkySwallow Tools"; Filename: "{app}\SkySwallowServer.exe"; WorkingDir: "{app}"
+Name: "{group}\Set SkySwallow Shared PIN"; Filename: "{app}\SkySwallowServer.exe"; Parameters: "--set-shared-pin"; WorkingDir: "{app}"
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);

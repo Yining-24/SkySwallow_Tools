@@ -56,7 +56,7 @@ jobs:
         run: python -m pip install -r requirements-build.txt
 
       - name: Check configuration permission rules
-        run: python -m unittest -q tests.test_configuration_acl
+        run: python -m unittest discover -q
 
       - name: Build Windows application
         run: python -m PyInstaller --clean --noconfirm SkySwallowTools.spec
@@ -293,15 +293,19 @@ jobs:
                   throw "The installed server did not start."
               }
 
-              $login = Invoke-RestMethod `
-                -Uri "http://127.0.0.1:5001/api/auth/login" `
-                -Method Post `
-                -ContentType "application/json" `
-                -Body '{"role":"admin","password":"AdminSmokeTest2026!"}' `
-                -TimeoutSec 5
-
-              if ($login.role -ne "admin") {
-                  throw "The installed server rejected its first-time password."
+              $passwords = @{
+                  admin = "048271"
+                  finance = "048271"
+                  followup = "048271"
+              }
+              foreach ($role in $passwords.Keys) {
+                  $body = @{ role = $role; password = $passwords[$role] } | ConvertTo-Json
+                  $login = Invoke-RestMethod `
+                    -Uri "http://127.0.0.1:5001/api/auth/login" `
+                    -Method Post -ContentType "application/json" -Body $body -TimeoutSec 5
+                  if ($login.role -ne $role) {
+                      throw "The installed server rejected first-time login for $role."
+                  }
               }
           }
           finally {
@@ -313,6 +317,49 @@ jobs:
                 -ErrorAction SilentlyContinue
               Get-Content (Join-Path $env:RUNNER_TEMP "installed-errors.log") `
                 -ErrorAction SilentlyContinue
+          }
+
+      - name: Test password reset and all installed role logins
+        shell: pwsh
+        run: |
+          $installPath = Join-Path $env:RUNNER_TEMP "SkySwallowInstalled"
+          $env:SKYSWALLOW_INSTANCE_PATH = Join-Path $env:RUNNER_TEMP "SkySwallowInstalledConfig"
+          python -m tests.prepare_installer_config --reset
+          if ($LASTEXITCODE -ne 0) { throw "Password-reset verification failed." }
+
+          $server = Start-Process `
+            -FilePath (Join-Path $installPath "SkySwallowServer.exe") `
+            -PassThru `
+            -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP "reset-output.log") `
+            -RedirectStandardError (Join-Path $env:RUNNER_TEMP "reset-errors.log")
+          try {
+              $ready = $false
+              for ($attempt = 1; $attempt -le 30; $attempt++) {
+                  if ($server.HasExited) { throw "The server stopped after password reset." }
+                  try {
+                      $health = Invoke-RestMethod -Uri "http://127.0.0.1:5001/api/health" -TimeoutSec 2
+                      if ($health.status -eq "ok") { $ready = $true; break }
+                  }
+                  catch { Start-Sleep -Seconds 1 }
+              }
+              if (-not $ready) { throw "The server did not start after password reset." }
+              $passwords = @{
+                  admin = "593804"
+                  finance = "593804"
+                  followup = "593804"
+              }
+              foreach ($role in $passwords.Keys) {
+                  $body = @{ role = $role; password = $passwords[$role] } | ConvertTo-Json
+                  $login = Invoke-RestMethod `
+                    -Uri "http://127.0.0.1:5001/api/auth/login" `
+                    -Method Post -ContentType "application/json" -Body $body -TimeoutSec 5
+                  if ($login.role -ne $role) { throw "Login failed after password reset for $role." }
+              }
+          }
+          finally {
+              if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+              Get-Content (Join-Path $env:RUNNER_TEMP "reset-output.log") -ErrorAction SilentlyContinue
+              Get-Content (Join-Path $env:RUNNER_TEMP "reset-errors.log") -ErrorAction SilentlyContinue
           }
 
       - name: Upload Windows package

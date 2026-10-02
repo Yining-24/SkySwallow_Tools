@@ -1,5 +1,6 @@
 """Create the private configuration for a packaged Windows installation."""
 
+import ast
 import csv
 from getpass import getpass
 import hashlib
@@ -142,23 +143,16 @@ def _password_hash(password):
     return f"pbkdf2:sha256:{HASH_ITERATIONS}${salt}${digest}"
 
 
-def _ask_password(label, used_passwords):
+def _ask_shared_pin():
     while True:
-        password = getpass(f"{label} password (at least 12 characters): ")
-
-        if len(password) < 12:
-            print("Please use at least 12 characters.")
+        pin = getpass("Shared PIN for ALL roles (exactly 6 digits): ")
+        if not re.fullmatch(r"[0-9]{6}", pin):
+            print("Please enter exactly six digits, using 0-9 only.")
             continue
-
-        if password in used_passwords:
-            print("Use a different password for each role.")
+        if getpass("Repeat shared PIN: ") != pin:
+            print("The PINs did not match. Try again.")
             continue
-
-        if getpass("Repeat password: ") != password:
-            print("The passwords did not match. Try again.")
-            continue
-
-        return password
+        return pin
 
 
 def _allow_network_access():
@@ -218,8 +212,11 @@ def configure_instance():
 
         answer = input(
             f"Existing configuration found at {config_path}. "
-            "Type REUSE only if you recognize this file: "
+            "Type REUSE to preserve it, or PIN to set a new shared six-digit PIN: "
         ).strip()
+
+        if answer == "PIN":
+            return set_shared_pin(confirm=False)
 
         if answer != "REUSE":
             raise OSError("Existing configuration was not approved for reuse.")
@@ -228,16 +225,12 @@ def configure_instance():
         return config_path
 
     print("SkySwallow Tools first-time setup")
-    print("Passwords are entered privately and stored only as hashes.")
+    print("All three roles will use one shared six-digit PIN, stored only as hashes.")
+    print("Anyone with this PIN can select Administrator and access all tools.")
     allow_network = _allow_network_access()
 
-    password_hashes = {}
-    used_passwords = set()
-
-    for role, label in ROLE_NAMES:
-        password = _ask_password(label, used_passwords)
-        used_passwords.add(password)
-        password_hashes[role] = _password_hash(password)
+    pin = _ask_shared_pin()
+    password_hashes = {role: _password_hash(pin) for role, _ in ROLE_NAMES}
 
     secret_key = secrets.token_hex(32)
     server_host = "0.0.0.0" if allow_network else "127.0.0.1"
@@ -289,4 +282,122 @@ def configure_instance():
     else:
         print("This installation is accessible only on this computer.")
 
+    return config_path
+
+
+def _check_reset_permissions(instance_path, config_path):
+    if os.name != "nt":
+        return
+
+    import ctypes
+
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        raise OSError("Right-click Set SkySwallow Shared PIN and choose Run as administrator.")
+
+    sid = _current_user_sid()
+    allowed_sids = {sid, ADMINISTRATORS_SID, SYSTEM_SID}
+    _assert_trusted_acl(instance_path, allowed_sids)
+    _assert_trusted_acl(config_path, allowed_sids)
+
+
+def _secure_reset_file(path):
+    if os.name == "nt":
+        _run_icacls(path, "/reset")
+        _run_icacls(path, "/setowner", f"*{ADMINISTRATORS_SID}")
+        _assert_trusted_acl(
+            path, {_current_user_sid(), ADMINISTRATORS_SID, SYSTEM_SID},
+        )
+
+
+def _private_reset_file(instance_path, content, prefix):
+    descriptor, filename = tempfile.mkstemp(
+        prefix=prefix, suffix=".bak", dir=instance_path,
+    )
+    path = Path(filename)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(content)
+        _secure_reset_file(path)
+        return path
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _parse_password_settings(config_text):
+    try:
+        tree = ast.parse(config_text)
+        assignments = [
+            statement for statement in tree.body
+            if isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == "PASSWORD_HASHES"
+        ]
+        references = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == "PASSWORD_HASHES"
+        ]
+        if len(assignments) != 1 or len(references) != 1:
+            raise ValueError("Expected one literal PASSWORD_HASHES assignment.")
+        value = assignments[0].value
+        password_hashes = ast.literal_eval(value)
+        if not isinstance(password_hashes, dict) or any(
+            not isinstance(password_hashes.get(role), str)
+            or not password_hashes[role]
+            for role, _ in ROLE_NAMES
+        ):
+            raise ValueError("Missing role password hashes.")
+        return value, password_hashes
+    except (SyntaxError, ValueError, TypeError) as error:
+        raise OSError("The existing configuration cannot be safely edited; nothing was changed.") from error
+
+
+def set_shared_pin(confirm=True):
+    """Set one PIN for every role without executing or replacing other settings."""
+    instance_path = find_instance_path()
+    config_path = instance_path / "config.py"
+    if instance_path.is_symlink() or instance_path.is_junction():
+        raise OSError("The configuration directory cannot be a link or junction.")
+    if config_path.is_symlink() or not config_path.is_file():
+        raise OSError("A regular existing config.py is required; nothing was changed.")
+    _check_reset_permissions(instance_path, config_path)
+
+    original = config_path.read_bytes()
+    try:
+        config_text = original.decode("utf-8-sig")
+    except UnicodeError as error:
+        raise OSError("The configuration must be UTF-8; nothing was changed.") from error
+    value, password_hashes = _parse_password_settings(config_text)
+    print("Set ONE shared six-digit PIN for Administrator, Finance, and Follow-up.")
+    print("Anyone with this PIN can select Administrator and access all tools.")
+    print("Stop the SkySwallow server before continuing. Other settings will be preserved.")
+    if confirm and input("Type PIN to continue: ").strip() != "PIN":
+        raise OSError("Reset cancelled; nothing was changed.")
+
+    pin = _ask_shared_pin()
+    for role, _ in ROLE_NAMES:
+        password_hashes[role] = _password_hash(pin)
+
+    # AST column offsets are UTF-8 byte offsets, not character positions.
+    lines = config_text.encode("utf-8").splitlines(keepends=True)
+    start = sum(map(len, lines[:value.lineno - 1])) + value.col_offset
+    end = sum(map(len, lines[:value.end_lineno - 1])) + value.end_col_offset
+    encoded = config_text.encode("utf-8")
+    updated = encoded[:start] + repr(password_hashes).encode("utf-8") + encoded[end:]
+
+    _check_reset_permissions(instance_path, config_path)
+    if config_path.read_bytes() != original:
+        raise OSError("Configuration changed during reset; nothing was overwritten.")
+    backup = _private_reset_file(instance_path, original, "config-before-reset-")
+    temporary = _private_reset_file(instance_path, updated, ".config-reset-")
+    try:
+        if config_path.is_symlink() or config_path.read_bytes() != original:
+            raise OSError("Configuration changed during reset; nothing was overwritten.")
+        os.replace(temporary, config_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    print("Shared PIN updated for ALL three roles.")
+    print(f"Private backup saved: {backup}")
+    print("Restart Start SkySwallow Tools, then log in using the matching role.")
     return config_path
