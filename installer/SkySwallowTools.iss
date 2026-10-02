@@ -29,13 +29,8 @@ Name: "{group}\Start SkySwallow Tools"; Filename: "{app}\SkySwallowServer.exe"; 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
-  ConfigPath: String;
 begin
   if (CurStep <> ssPostInstall) or WizardSilent then
-    Exit;
-
-  ConfigPath := ExpandConstant('{commonappdata}\SkySwallowTools\config.py');
-  if FileExists(ConfigPath) then
     Exit;
 
   if not Exec(
@@ -45,7 +40,8 @@ begin
     SW_SHOW,
     ewWaitUntilTerminated,
     ResultCode
-  ) or (ResultCode <> 0) then
+  ) or (ResultCode <> 0) or
+    not FileExists(ExpandConstant('{commonappdata}\SkySwallowTools\config.py')) then
     MsgBox(
       'The application files were installed, but first-time password setup ' +
       'did not finish. Run SkySwallowServer.exe --configure as an ' +

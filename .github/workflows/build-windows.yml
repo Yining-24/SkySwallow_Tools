@@ -40,6 +40,9 @@ jobs:
       - name: Install Python build dependencies
         run: python -m pip install -r requirements-build.txt
 
+      - name: Check configuration permission rules
+        run: python -m unittest -q tests.test_configuration_acl
+
       - name: Build Windows application
         run: python -m PyInstaller --clean --noconfirm SkySwallowTools.spec
 
@@ -211,6 +214,89 @@ jobs:
 
           if (-not (Test-Path (Join-Path $installPath "_internal/frontend/dist/index.html"))) {
               throw "The installed frontend was not found."
+          }
+
+      - name: Test installed app and first-time configuration
+        shell: pwsh
+        run: |
+          $installPath = Join-Path $env:RUNNER_TEMP "SkySwallowInstalled"
+          $env:SKYSWALLOW_INSTANCE_PATH = Join-Path `
+            $env:RUNNER_TEMP `
+            "SkySwallowInstalledConfig"
+          python -m tests.prepare_installer_config
+
+          $configPath = Join-Path $env:SKYSWALLOW_INSTANCE_PATH "config.py"
+          $broadGroups = @("S-1-1-0", "S-1-5-11", "S-1-5-32-545")
+
+          foreach ($path in @($env:SKYSWALLOW_INSTANCE_PATH, $configPath)) {
+              $acl = Get-Acl $path
+              $owner = $acl.GetOwner(
+                  [System.Security.Principal.SecurityIdentifier]
+              ).Value
+
+              if ($owner -ne "S-1-5-32-544") {
+                  throw "Unexpected configuration owner on ${path}: $owner"
+              }
+
+              foreach ($entry in $acl.Access) {
+                  $sid = $entry.IdentityReference.Translate(
+                    [System.Security.Principal.SecurityIdentifier]
+                  ).Value
+
+                  if ($sid -in $broadGroups) {
+                      throw "Configuration is accessible by a broad group: $sid"
+                  }
+              }
+          }
+
+          $server = Start-Process `
+            -FilePath (Join-Path $installPath "SkySwallowServer.exe") `
+            -PassThru `
+            -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP "installed-output.log") `
+            -RedirectStandardError (Join-Path $env:RUNNER_TEMP "installed-errors.log")
+
+          try {
+              $ready = $false
+
+              for ($attempt = 1; $attempt -le 30; $attempt++) {
+                  if ($server.HasExited) {
+                      throw "The installed server stopped unexpectedly."
+                  }
+
+                  try {
+                      $health = Invoke-RestMethod `
+                        -Uri "http://127.0.0.1:5001/api/health" `
+                        -TimeoutSec 2
+
+                      if ($health.status -eq "ok") {
+                          $ready = $true
+                          break
+                      }
+                  }
+                  catch {
+                      Start-Sleep -Seconds 1
+                  }
+              }
+
+              if (-not $ready) {
+                  throw "The installed server did not start."
+              }
+
+              $login = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:5001/api/auth/login" `
+                -Method Post `
+                -ContentType "application/json" `
+                -Body '{"role":"admin","password":"AdminSmokeTest2026!"}' `
+                -TimeoutSec 5
+
+              if ($login.role -ne "admin") {
+                  throw "The installed server rejected its first-time password."
+              }
+          }
+          finally {
+              if (-not $server.HasExited) {
+                  Stop-Process -Id $server.Id -Force
+              }
           }
 
       - name: Upload Windows installer

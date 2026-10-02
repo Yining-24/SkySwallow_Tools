@@ -1,4 +1,5 @@
 import argparse
+import subprocess
 
 from waitress import serve
 
@@ -18,7 +19,7 @@ def main(argv=None):
     if arguments.configure:
         try:
             configure_instance()
-        except (EOFError, KeyboardInterrupt, OSError) as error:
+        except (EOFError, KeyboardInterrupt, OSError, subprocess.SubprocessError) as error:
             print(f"Configuration was not completed: {error}")
             return 1
 

@@ -16,8 +16,13 @@ the next Windows test.
 
 The installer saves a random Flask secret and password hashes in
 `C:\ProgramData\SkySwallowTools\config.py`. It preserves an existing config on
-upgrade and uninstall. Never put this file in GitHub or send it to another
-person.
+upgrade and uninstall. If a config already exists, first-time setup asks you
+to type `REUSE` before using it. For safety, it refuses existing folders or
+files with unfamiliar ownership or permissions; have an administrator review
+those instead of overriding the warning. The setup restricts the configuration
+folder to the installing Windows account, Administrators, and SYSTEM. Run the
+server from the same Windows account used to install it. Never put `config.py` in
+GitHub or send it to another person.
 
 This installer preview does not set up automatic startup or a Windows Firewall
 rule. Those are required before the company host can serve other computers.
